@@ -1,0 +1,1 @@
+This folder contains the resources, such as code and images, of EGODS' fill station intermediate design concept, in which the idea of two-way communications (transmit and receive) are established for both modules via the use of on/off switches, LEDS, and an ultrasonic sensor.
