@@ -1,2 +1,2 @@
 # EGODS_remote_fill_station
-Code to operate the Command Box and Actuator Box for EGODS remote fill station.
+This repository contains all the resources related to MHPR EGODS' fill station.
