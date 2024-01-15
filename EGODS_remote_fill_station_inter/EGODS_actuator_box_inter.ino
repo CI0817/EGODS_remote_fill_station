@@ -12,10 +12,10 @@ Description   : Let a microncontroller (Arduino Uno R4 Minima) constantly sends
 #include <LoRa.h>
 
 // Define microcontroller pins
-  /* Switches */
-const int FILL_LED = 8;
-const int DUMP_LED = 5;
-const int CHECK_LED = 4;
+  /* Valve actuators */
+const int FILL_COMND = 7;
+const int DUMP_COMND = 8;
+const int CHECK_COMND = 9;
 
   /* LoRA comms */
 const int LORA_G0 = 3;
@@ -25,9 +25,10 @@ const int LORA_MOSI = 11;
 const int LORA_CS = 10;
 const int LORA_RST = 2;
 
-  /* Ultrasonic sensor */
-const int ULTRA_TRIG = 6;
-const int ULTRA_ECHO = 7;
+  /* Pressure transducers */
+const int FILL_PRES = A1;
+const int DUMP_PRES = A2;
+const int CHECK_PRES = A3;
 
 // Declare and initialise constants
 const long LORA_FREQ = 915E6;     // LoRA's transceiver module operaating frequency
@@ -38,10 +39,10 @@ byte local_address = 0xBB;
 byte destination_address = 0xCC;
 
   /* Code to be received */
-byte code = 0;
-byte received_code = 0;       // to counter forbidden states
-String eight_bit_code = "";
-/* code encode/decode:
+byte opcode = 0;
+byte rcv_opcode = 0;       // to counter forbidden states
+String eight_bit_opcode = "";
+/* opcode:
   (0) 0b00000000  : fill valve OFF, dump valve OFF, check valve OFF (off state)
   (1) 0b00000001  : fill valve OFF, dump valve OFF, check valve ON  (don't care state)
   (2) 0b00000010  : fill valve OFF, dump valve ON,  check valve OFF (dumping state)
@@ -52,9 +53,10 @@ String eight_bit_code = "";
   (7) 0b00000111  : fill valve ON,  dump valve ON,  check valve ON  (forbidden state - draining the supply tank + bad practice)
 */
 
-  /* Data to be sent */
-String data = "";
-float distance = 0;
+  /* Pressure transducers data */
+float fill_pres = 0;
+float dump_pres = 0;
+float check_pres = 0;
 
   /* Set up and loop function success checker */
 byte set_up_success = 0;
@@ -69,13 +71,18 @@ void setup() {
   Serial.begin(9600); while (!Serial); // wait for Serial to set up properly
 
   // Set up valve actuator pins
-  pinMode(FILL_LED, OUTPUT);
-  pinMode(DUMP_LED, OUTPUT);
-  pinMode(CHECK_LED, OUTPUT);
+  pinMode(FILL_COMND, OUTPUT);
+  pinMode(DUMP_COMND, OUTPUT);
+  pinMode(CHECK_COMND, OUTPUT);
 
-  // Set up the ultrasonic pins
-  pinMode(ULTRA_TRIG, OUTPUT);
-  pinMode(ULTRA_ECHO, INPUT);
+  // // Set up the ultrasonic pins
+  // pinMode(ULTRA_TRIG, OUTPUT);
+  // pinMode(ULTRA_ECHO, INPUT);
+
+  // Set up the pressure transducer pins
+  pinMode(FILL_PRES, INPUT);
+  pinMode(DUMP_PRES, INPUT);
+  pinMode(CHECK_PRES, INPUT);
 
   // Set up LoRA module pins
   LoRa.setPins(LORA_CS, LORA_RST, LORA_G0);
@@ -107,77 +114,111 @@ void loop() {
   }
   // If everything ran properly, proceed to run the loop...
   if (millis() - last_send_time > interval) {
-    // Get the data by reading from the ultrasonic sensor
-    ultrasonic_reading();
-    data = String(distance);
-    Serial.println("data: " + data);
+    Serial.println("-------- TRANSMIT --------");
+    // Get the data by reading from pressure transducer
+    fill_pres = analogRead(FILL_PRES);
+    dump_pres = analogRead(DUMP_PRES);
+    check_pres = analogRead(CHECK_PRES);
+    // Print the data onto the Serial monitor
+    Serial.println("fill_pres: " + String(fill_pres));
+    Serial.println("dump_pres: " + String(dump_pres));
+    Serial.println("check_pres: " + String(check_pres));
     // Send the data to the command box
-    sendMessage(data);
+    sendMessage(fill_pres, dump_pres, check_pres);
     // Update the last send time and interval
     last_send_time = millis();
     interval = random(1000) + 500;
+    Serial.println("--------- RECEIVE --------");
     // Put the module back in receiving mode
     LoRa.receive();
-    LED_actuation(code);
-    eight_bit_code_format(code);
-    Serial.println("code: " + eight_bit_code);
+    // Actuate the LEDs
+    LED_actuation(opcode);
+    // Print the opcode onto the Serial monitor
+    eight_bit_code_format(opcode);
+    Serial.println("opcode: " + eight_bit_opcode);
+    Serial.println("--------------------------------------------------");
   }
 }
 
-// Code inspired by: https://howtomechatronics.com/tutorials/arduino/ultrasonic-sensor-hc-sr04/
-void ultrasonic_reading() { 
-  // Clears the trigPin
-  digitalWrite(ULTRA_TRIG, 0);
-  delayMicroseconds(2);
-  // Sets the trigPin on HIGH state for 10 micro seconds
-  digitalWrite(ULTRA_TRIG, 1);
-  delayMicroseconds(10);
-  digitalWrite(ULTRA_TRIG, 0);
-  // Reads the echoPin, returns the sound wave travel time in microseconds
-  long duration = pulseIn(ULTRA_ECHO, 1);
-  // Calculating the distance
-  distance = duration * 0.034 / 2;
+/* This function is to be used to get the data from the pressure transducers */
+float pressure_reading(int pres_pin) {
+  // Empty for now
 }
 
-void sendMessage(String data) {
+/* This function is used to send the operating state as a code to the actuator box */
+void sendMessage(float data1, float data2, float data3) {
+  // Start transmitting the packet
   LoRa.beginPacket();
+  // Include the destination and local address as the headers
   LoRa.write(destination_address);
   LoRa.write(local_address);
-  LoRa.print(data);
+  // Include the first data
+  LoRa.print(String(data1));
+  // Include a separator
+  LoRa.print('|');
+  // Include the second data
+  LoRa.print(String(data2));
+  // Include a separator
+  LoRa.print('|');
+  // Include the third data
+  LoRa.print(String(data3));
+  // End the transmission
   LoRa.endPacket();
 }
 
+/* This function is used to receive data from the actuator box and store them appropriately */
 void onReceive(int packet_size) {
+  // Check if there is any received packet
   if (packet_size) {
+    // Read the destination and local address and compare them to make sure it is intended for us
     byte recipient_address = LoRa.read();
     byte sender_address = LoRa.read();
     if ((recipient_address != local_address) || (sender_address != destination_address)) {
       Serial.println("ON RECEIVE ERROR  : packet was not meant to be received.");
       return;
     }
-    code = LoRa.read();
+    // Read the message received
+    opcode = LoRa.read();
   }
 }
 
+/* This function is used to turn on/off three LEDs which represent the three solenoid valves to be actuating */
 void LED_actuation(byte code) {
   if ((code==1) || (code==3) || (code==6) || (code==7)) {
     Serial.println("DONT_CARE/FORBIDDEN : received message belongs to a don't care or forbidden state.");
-  } else { received_code = code; };
-  byte received_fill_sw_state = (received_code >> 2) & 0b1; // Serial.println("fill_sw_state: " + String(received_fill_sw_state));
-  byte received_dump_sw_state = (received_code >> 1) & 0b1; // Serial.println("dump_sw_state: " + String(received_dump_sw_state));
-  byte received_check_sw_state = received_code & 0b1; // Serial.println("check_sw_state: " + String(received_check_sw_state));
-  digitalWrite(FILL_LED, received_fill_sw_state);
-  digitalWrite(DUMP_LED, received_dump_sw_state);
-  digitalWrite(CHECK_LED, received_check_sw_state);
+  } else { rcv_opcode = code; };
+  byte rcv_fill_sw_state = (rcv_opcode >> 2) & 0b1; // Serial.println("fill_sw_state: " + String(received_fill_sw_state));
+  byte rcv_dump_sw_state = (rcv_opcode >> 1) & 0b1; // Serial.println("dump_sw_state: " + String(received_dump_sw_state));
+  byte rcv_check_sw_state = rcv_opcode & 0b1; // Serial.println("check_sw_state: " + String(received_check_sw_state));
+  digitalWrite(FILL_COMND, rcv_fill_sw_state);
+  digitalWrite(DUMP_COMND, rcv_dump_sw_state);
+  digitalWrite(CHECK_COMND, rcv_check_sw_state);
 }
 
+/* This function is used to create an eight-bit format for printing onto the serial monitor. 
+    It is for displaying the operating state neatly */
 void eight_bit_code_format(byte code) {
-  eight_bit_code = "";
+  eight_bit_opcode = "";
   for (int i=7; i >-1; i--) {
-    eight_bit_code += bitRead(code,i);
+    eight_bit_opcode += bitRead(code,i);
   }
 }
 
+
+// // Code inspired by: https://howtomechatronics.com/tutorials/arduino/ultrasonic-sensor-hc-sr04/
+// void ultrasonic_reading() { 
+//   // Clears the trigPin
+//   digitalWrite(ULTRA_TRIG, 0);
+//   delayMicroseconds(2);
+//   // Sets the trigPin on HIGH state for 10 micro seconds
+//   digitalWrite(ULTRA_TRIG, 1);
+//   delayMicroseconds(10);
+//   digitalWrite(ULTRA_TRIG, 0);
+//   // Reads the echoPin, returns the sound wave travel time in microseconds
+//   long duration = pulseIn(ULTRA_ECHO, 1);
+//   // Calculating the distance
+//   distance = duration * 0.034 / 2;
+// }
 /* ----------------------------------------------------------------------------------- */
 // // empty sketch
 // void setup() {
